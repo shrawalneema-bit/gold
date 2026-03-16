@@ -53,6 +53,9 @@ RSS_FEEDS = {
     "Google News: gold price":    "https://news.google.com/rss/search?q=gold+price&hl=en-US&gl=US&ceid=US:en",
     "Google News: gold futures":  "https://news.google.com/rss/search?q=gold+futures+XAU&hl=en-US&gl=US&ceid=US:en",
     "Yahoo Finance GC=F":         "https://finance.yahoo.com/rss/headline?s=GC%3DF",
+    # Indian sources
+    "Google News India: MCX gold":"https://news.google.com/rss/search?q=MCX+gold+price+India&hl=en-IN&gl=IN&ceid=IN:en",
+    "Google News India: gold INR": "https://news.google.com/rss/search?q=gold+price+India+rupee&hl=en-IN&gl=IN&ceid=IN:en",
 }
 
 GOLD_KEYWORDS = re.compile(
