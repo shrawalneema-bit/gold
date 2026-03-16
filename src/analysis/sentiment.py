@@ -8,11 +8,11 @@ Sources (all free, no API key required):
 
 import os
 import re
-import time
 import requests
-import feedparser
+import xml.etree.ElementTree as ET
 import pandas as pd
 from datetime import datetime, timedelta
+from email.utils import parsedate_to_datetime
 from typing import Optional
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
@@ -54,21 +54,46 @@ GOLD_KEYWORDS = re.compile(
 
 
 def _fetch_rss(feed_url: str, timeout: int = 8) -> list[dict]:
-    """Parse an RSS feed; return list of {title, summary, published} dicts."""
+    """Parse an RSS feed using stdlib xml; return list of {title, summary, published} dicts."""
     try:
-        feed = feedparser.parse(feed_url)
+        resp = requests.get(feed_url, timeout=timeout, headers={"User-Agent": "Mozilla/5.0"})
+        resp.raise_for_status()
+        root = ET.fromstring(resp.content)
+        # Handle both RSS and Atom namespaces
+        ns = {"atom": "http://www.w3.org/2005/Atom"}
+        channel = root.find("channel")
+        source_title = feed_url
+        if channel is not None:
+            t = channel.find("title")
+            if t is not None and t.text:
+                source_title = t.text
+            items = channel.findall("item")
+        else:
+            items = root.findall("atom:entry", ns)
+
         articles = []
-        for entry in feed.entries[:30]:
-            title   = getattr(entry, "title", "")
-            summary = getattr(entry, "summary", "")
-            pub     = getattr(entry, "published_parsed", None)
-            published = datetime(*pub[:6]) if pub else datetime.utcnow()
+        for item in items[:30]:
+            def txt(tag):
+                el = item.find(tag)
+                return el.text.strip() if el is not None and el.text else ""
+
+            title   = txt("title")
+            summary = txt("description") or txt("summary") or txt("atom:summary")
+            link    = txt("link")
+            pub_str = txt("pubDate") or txt("published") or txt("updated")
+
+            try:
+                published = parsedate_to_datetime(pub_str) if pub_str else datetime.utcnow()
+                published = published.replace(tzinfo=None)
+            except Exception:
+                published = datetime.utcnow()
+
             articles.append({
                 "title":     title,
                 "summary":   summary,
                 "published": published,
-                "source":    feed.feed.get("title", feed_url),
-                "url":       getattr(entry, "link", ""),
+                "source":    source_title,
+                "url":       link,
             })
         return articles
     except Exception:
