@@ -455,9 +455,9 @@ with col_gauge:
             "bgcolor": "#0f0f1a",
             "bordercolor": "#1e1e30",
             "steps": [
-                {"range": [0, 30],  "color": "#26a69a15"},
-                {"range": [30, 70], "color": "#88888810"},
-                {"range": [70, 100],"color": "#ef535015"},
+                {"range": [0, 30],  "color": "rgba(38,166,154,0.08)"},
+                {"range": [30, 70], "color": "rgba(136,136,136,0.06)"},
+                {"range": [70, 100],"color": "rgba(239,83,80,0.08)"},
             ],
             "threshold": {
                 "line": {"color": "#c9a84c", "width": 2},
@@ -516,9 +516,9 @@ with col_bb:
             "bgcolor": "#0f0f1a",
             "bordercolor": "#1e1e30",
             "steps": [
-                {"range": [0,  20], "color": "#26a69a15"},
-                {"range": [20, 80], "color": "#88888810"},
-                {"range": [80, 100],"color": "#ef535015"},
+                {"range": [0,  20], "color": "rgba(38,166,154,0.08)"},
+                {"range": [20, 80], "color": "rgba(136,136,136,0.06)"},
+                {"range": [80, 100],"color": "rgba(239,83,80,0.08)"},
             ],
         },
     ))
@@ -560,15 +560,15 @@ fig = make_subplots(
 fig.add_trace(go.Candlestick(
     x=df.index, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"],
     name="Gold",
-    increasing_line_color="#26a69a", increasing_fillcolor="#26a69a22",
-    decreasing_line_color="#ef5350", decreasing_fillcolor="#ef535022",
+    increasing_line_color="#26a69a", increasing_fillcolor="rgba(38,166,154,0.13)",
+    decreasing_line_color="#ef5350", decreasing_fillcolor="rgba(239,83,80,0.13)",
 ), row=1, col=1)
 
 # Indicator overlays
 COLORS = {
     "SMA_20": "#c9a84c", "SMA_50": "#f57c00", "SMA_200": "#ef5350",
     "EMA_12": "#42a5f5", "EMA_26": "#1976d2",
-    "BB_High": "#4fc3f7", "BB_Low": "#4fc3f7", "BB_Mid": "#4fc3f780",
+    "BB_High": "#4fc3f7", "BB_Low": "#4fc3f7", "BB_Mid": "rgba(79,195,247,0.5)",
 }
 for ind in chart_indicators:
     if ind in df.columns:
@@ -594,8 +594,8 @@ fig.add_trace(go.Scatter(
 ), row=2, col=1)
 fig.add_hrect(y0=70, y1=100, fillcolor="rgba(239,83,80,0.06)",  line_width=0, row=2, col=1)
 fig.add_hrect(y0=0,  y1=30,  fillcolor="rgba(38,166,154,0.06)", line_width=0, row=2, col=1)
-fig.add_hline(y=70, line_dash="dash", line_color="#ef535040", line_width=1, row=2, col=1)
-fig.add_hline(y=30, line_dash="dash", line_color="#26a69a40", line_width=1, row=2, col=1)
+fig.add_hline(y=70, line_dash="dash", line_color="rgba(239,83,80,0.25)",  line_width=1, row=2, col=1)
+fig.add_hline(y=30, line_dash="dash", line_color="rgba(38,166,154,0.25)", line_width=1, row=2, col=1)
 
 # MACD
 fig.add_trace(go.Scatter(
@@ -621,10 +621,10 @@ if show_sr:
     # Plot only the most recent S/R level as a horizontal line
     r_level = resistance.dropna().iloc[-1]
     s_level = support.dropna().iloc[-1]
-    fig.add_hline(y=r_level, line_dash="dot", line_color="#ef535060", line_width=1.5,
+    fig.add_hline(y=r_level, line_dash="dot", line_color="rgba(239,83,80,0.4)", line_width=1.5,
                   annotation_text=f"R ${r_level:,.0f}", annotation_font_color="#ef5350",
                   annotation_font_size=10, row=1, col=1)
-    fig.add_hline(y=s_level, line_dash="dot", line_color="#26a69a60", line_width=1.5,
+    fig.add_hline(y=s_level, line_dash="dot", line_color="rgba(38,166,154,0.4)", line_width=1.5,
                   annotation_text=f"S ${s_level:,.0f}", annotation_font_color="#26a69a",
                   annotation_font_size=10, row=1, col=1)
 
@@ -665,12 +665,12 @@ fig.update_layout(
     margin=dict(l=10, r=10, t=30, b=10),
     font=dict(family="Inter", color="#888"),
     hovermode="x unified",
-    hoverlabel=dict(bgcolor="#1a1a2e", bordercolor="#c9a84c30", font_color="#ddd"),
+    hoverlabel=dict(bgcolor="#1a1a2e", bordercolor="rgba(201,168,76,0.2)", font_color="#ddd"),
 )
 for i in range(1, rows+1):
     fig.update_xaxes(
         gridcolor="#1a1a2e", zeroline=False,
-        showspikes=True, spikecolor="#c9a84c40", spikethickness=1,
+        showspikes=True, spikecolor="rgba(201,168,76,0.25)", spikethickness=1,
         row=i, col=1,
     )
     fig.update_yaxes(gridcolor="#1a1a2e", zeroline=False, row=i, col=1)
@@ -771,7 +771,7 @@ if pred and "feature_importances" in pred:
             orientation="h",
             marker=dict(
                 color=fi_df["Importance"],
-                colorscale=[[0,"#1a1a2e"],[0.5,"#c9a84c80"],[1,"#c9a84c"]],
+                colorscale=[[0,"#1a1a2e"],[0.5,"rgba(201,168,76,0.5)"],[1,"#c9a84c"]],
                 showscale=False,
             ),
         ))
