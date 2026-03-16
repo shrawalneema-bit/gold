@@ -22,14 +22,49 @@ from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 _analyzer = SentimentIntensityAnalyzer()
 
+# Expanded gold-tuned lexicon with 50+ domain-specific terms
 _GOLD_LEXICON = {
+    # Core gold terms
     "bullion": 1.5, "safe-haven": 2.0, "safe haven": 2.0,
-    "inflation": 1.5, "stagflation": 2.0, "recession": -1.5,
-    "rate hike": -2.0, "rate cut": 2.0, "geopolitical": 1.0,
-    "uncertainty": 1.0, "dollar strength": -2.0, "dollar weakness": 2.0,
-    "fed hawkish": -2.0, "fed dovish": 2.0, "central bank buying": 2.5,
+    "gold demand": 1.5, "gold supply": -0.5, "gold reserves": 1.0,
+    "central bank buying": 2.5, "central bank selling": -2.0,
     "etf outflows": -1.5, "etf inflows": 1.5,
+    "store of value": 1.5, "inflation hedge": 2.0,
+    "alltime high": 1.5, "record high": 1.5, "breakout": 1.0,
+    "mining output": -0.5, "gold production": -0.3,
+    "jewelry demand": 1.0, "chinese demand": 1.5, "india demand": 1.5,
+
+    # Macro — inflation / monetary policy
+    "inflation": 1.5, "stagflation": 2.0, "hyperinflation": 2.5,
+    "deflation": -1.0, "disinflation": -0.8,
+    "rate hike": -2.0, "rate cut": 2.0, "rate pause": 1.0,
+    "rate pivot": 1.5, "pivot": 1.0,
+    "fed hawkish": -2.0, "fed dovish": 2.0,
+    "quantitative easing": 1.5, "qe": 1.0,
+    "quantitative tightening": -1.5, "qt": -0.8, "tapering": -1.5,
+    "interest rate": -0.5, "real yield": -1.5,
+    "treasury yield": -1.0, "bond yield": -1.0,
+    "yield inversion": 1.5, "inverted yield": 1.5,
+
+    # Dollar
+    "dollar strength": -2.0, "dollar weakness": 2.0,
+    "dollar index": -0.8, "dxy": -0.5,
+    "usd strong": -1.5, "usd weak": 1.5,
+    "currency debasement": 2.0,
+
+    # Risk / geopolitics
+    "geopolitical": 1.0, "uncertainty": 1.0, "risk-off": 1.5, "risk off": 1.5,
     "tariff": 1.0, "sanctions": 1.0, "war": 1.5, "conflict": 1.0,
+    "recession": -1.5, "economic slowdown": -0.8, "gdp contraction": -0.8,
+    "banking crisis": 2.0, "bank failure": 1.5, "financial crisis": 2.0,
+    "debt ceiling": 1.0, "sovereign debt": 0.8, "default risk": 1.5,
+
+    # Technical trading
+    "oversold": 1.0, "overbought": -1.0,
+    "support level": 0.5, "resistance level": -0.3,
+    "short squeeze": 1.0, "buying opportunity": 1.5,
+    "profit taking": -0.8, "selling pressure": -1.0,
+    "bearish": -1.5, "bullish": 1.5,
 }
 _analyzer.lexicon.update(_GOLD_LEXICON)
 
@@ -45,6 +80,25 @@ _HEADERS = {
     "Accept": "application/json, text/plain, */*",
 }
 
+# Source reliability weights — higher = more trusted for gold sentiment
+# Financial publications get more weight than general news or social media
+SOURCE_WEIGHTS = {
+    "reuters":       1.4,
+    "bloomberg":     1.4,
+    "marketwatch":   1.3,
+    "wsj":           1.3,
+    "financial times": 1.3,
+    "ft.com":        1.3,
+    "kitco":         1.5,   # dedicated gold news site
+    "goldprice":     1.4,
+    "world gold council": 1.5,
+    "yahoo finance": 1.1,
+    "bbc":           1.1,
+    "cnbc":          1.1,
+    "reddit":        0.7,   # social media: down-weight
+    "wallstreetbets": 0.5,  # highly speculative
+}
+
 RSS_FEEDS = {
     "Bing: gold price":   "https://www.bing.com/news/search?q=gold+price&format=RSS",
     "Bing: India gold":   "https://www.bing.com/news/search?q=MCX+gold+India+price&format=RSS",
@@ -57,6 +111,15 @@ REDDIT_SOURCES = [
     "https://www.reddit.com/r/investing/search.json?q=gold+price&sort=new&t=week&limit=25",
     "https://www.reddit.com/r/wallstreetbets/search.json?q=gold&sort=new&t=day&limit=20",
 ]
+
+
+def _source_weight(source: str) -> float:
+    """Return reliability weight for a given source name."""
+    src_lower = source.lower()
+    for key, weight in SOURCE_WEIGHTS.items():
+        if key in src_lower:
+            return weight
+    return 1.0
 
 
 # ── Reddit (most reliable from cloud, no auth needed) ─────────────────────────
@@ -104,7 +167,13 @@ def _fetch_yfinance_news() -> list[dict]:
         try:
             items = yf.Ticker(sym).news or []
             for item in items:
-                url = item.get("link") or item.get("url", "")
+                # yfinance news schema changed in 0.2.x — handle both formats
+                url = (
+                    item.get("link")
+                    or item.get("url")
+                    or item.get("canonicalUrl", {}).get("url", "")
+                    if isinstance(item, dict) else ""
+                )
                 if url in seen_urls:
                     continue
                 seen_urls.add(url)
@@ -113,9 +182,9 @@ def _fetch_yfinance_news() -> list[dict]:
                     published = datetime.utcfromtimestamp(int(pub_ts))
                 except Exception:
                     published = datetime.utcnow()
-                title   = item.get("title", "")
-                summary = item.get("summary", "") or ""
-                source  = item.get("publisher", "Yahoo Finance")
+                title   = item.get("title", "") if isinstance(item, dict) else ""
+                summary = (item.get("summary", "") or "") if isinstance(item, dict) else ""
+                source  = item.get("publisher", "Yahoo Finance") if isinstance(item, dict) else "Yahoo Finance"
                 if title:
                     articles.append({
                         "title": title, "summary": summary[:300],
@@ -241,11 +310,11 @@ def fetch_gold_news(max_articles: int = 60) -> list[dict]:
         if GOLD_KEYWORDS.search(a.get("title", "")) or
            GOLD_KEYWORDS.search(a.get("summary", ""))
     ]
-    # If filter too aggressive, keep everything
+    # If filter is too aggressive, keep everything
     if len(gold_articles) < 5:
         gold_articles = all_articles
 
-    # Deduplicate
+    # Deduplicate on title prefix
     seen, unique = set(), []
     for a in gold_articles:
         key = a.get("title", "")[:80].lower().strip()
@@ -260,13 +329,26 @@ def fetch_gold_news(max_articles: int = 60) -> list[dict]:
 # ── Scoring ───────────────────────────────────────────────────────────────────
 
 def score_article(article: dict) -> dict:
+    """
+    Score an article using VADER + gold-tuned lexicon.
+    Applies source reliability weighting to the compound score.
+    """
     text   = f"{article.get('title', '')}. {article.get('summary', '')}"
     scores = _analyzer.polarity_scores(text)
+
+    # Reliability-weighted compound: scale toward 0 for less-trusted sources
+    weight   = _source_weight(article.get("source", ""))
+    raw_comp = scores["compound"]
+    # Weight > 1 amplifies signal; weight < 1 dampens it
+    weighted_comp = max(-1.0, min(1.0, raw_comp * weight))
+
     result = dict(article)
-    result["compound"]  = scores["compound"]
+    result["compound"]  = round(weighted_comp, 4)
+    result["raw_compound"] = round(raw_comp, 4)
+    result["source_weight"] = weight
     result["sentiment"] = (
-        "Bullish" if scores["compound"] >= 0.05
-        else "Bearish" if scores["compound"] <= -0.05
+        "Bullish" if weighted_comp >= 0.05
+        else "Bearish" if weighted_comp <= -0.05
         else "Neutral"
     )
     return result
@@ -303,6 +385,12 @@ def build_daily_sentiment_series(articles: list[dict]) -> pd.Series:
         if isinstance(pub, str):
             try:
                 pub = pd.to_datetime(pub).to_pydatetime()
+            except Exception:
+                continue
+        # Ensure pub is a datetime object before calling .date()
+        if not isinstance(pub, datetime):
+            try:
+                pub = pd.Timestamp(pub).to_pydatetime()
             except Exception:
                 continue
         rows.append({"date": pub.date(), "compound": a["compound"]})

@@ -15,6 +15,7 @@ GOLD_ETF       = "GLD"        # SPDR Gold Shares ETF (highly liquid proxy)
 DXY_TICKER     = "DX-Y.NYB"  # US Dollar Index (inverse correlation with gold)
 SPY_TICKER     = "SPY"        # S&P 500 ETF (risk-on/off signal)
 TLT_TICKER     = "TLT"        # 20yr Treasury ETF (safe-haven signal)
+OIL_TICKER     = "CL=F"       # Crude Oil Futures — inflation proxy, mixed gold signal
 VIX_TICKER     = "VIXY"       # ProShares VIX ETF — more reliable than ^VIX on cloud
 VIX_FALLBACKS  = ["^VIX", "VIXM"]
 SILVER_TICKERS = ["SLV", "SIVR", "SI=F"]  # Silver fallback chain
@@ -59,26 +60,28 @@ def fetch_gold_realtime() -> dict:
     tk = yf.Ticker(GOLD_TICKER)
     info = tk.fast_info
     return {
-        "ticker":        GOLD_TICKER,
-        "last_price":    getattr(info, "last_price", None),
-        "previous_close":getattr(info, "previous_close", None),
-        "day_high":      getattr(info, "day_high", None),
-        "day_low":       getattr(info, "day_low", None),
-        "currency":      getattr(info, "currency", "USD"),
-        "timestamp":     datetime.utcnow().isoformat(),
+        "ticker":         GOLD_TICKER,
+        "last_price":     getattr(info, "last_price", None),
+        "previous_close": getattr(info, "previous_close", None),
+        "day_high":       getattr(info, "day_high", None),
+        "day_low":        getattr(info, "day_low", None),
+        "currency":       getattr(info, "currency", "USD"),
+        "timestamp":      datetime.utcnow().isoformat(),
     }
 
 
 def fetch_macro_context(period: str = "1y") -> pd.DataFrame:
     """
     Fetch macro context indicators aligned to gold dates.
-    Columns: DXY_Close, SPY_Close, TLT_Close, VIX_Close, Silver_Close, Gold_Silver_Ratio
+    Columns: DXY_Close, SPY_Close, TLT_Close, VIX_Close, Silver_Close,
+             Oil_Close, Gold_Silver_Ratio, USDINR_Close, Nifty_Close
     """
     tickers = {
         "DXY":    DXY_TICKER,
         "SPY":    SPY_TICKER,
         "TLT":    TLT_TICKER,
         "Silver": SILVER_TICKERS[0],  # primary; fallbacks tried below
+        "Oil":    OIL_TICKER,         # Crude oil futures
         "USDINR": USDINR_TICKER,
         "Nifty":  NIFTY_TICKER,
     }
@@ -124,12 +127,22 @@ def fetch_macro_context(period: str = "1y") -> pd.DataFrame:
 def fetch_combined(period: str = "1y") -> pd.DataFrame:
     """
     Fetch gold OHLCV + macro context in one aligned DataFrame.
+    Falls back to gold-only if macro fetch fails entirely.
     """
     gold = fetch_gold_ohlcv(period=period)
-    macro = fetch_macro_context(period=period)
 
-    # strip timezone for alignment
+    try:
+        macro = fetch_macro_context(period=period)
+    except Exception:
+        macro = pd.DataFrame()
+
+    # Strip timezone for alignment
     gold.index = gold.index.tz_localize(None) if gold.index.tz else gold.index
+
+    if macro.empty:
+        # Return gold-only DataFrame — no macro context, but dashboard still works
+        return gold
+
     macro.index = macro.index.tz_localize(None) if macro.index.tz else macro.index
 
     combined = gold.join(macro, how="left")
@@ -143,6 +156,14 @@ def fetch_combined(period: str = "1y") -> pd.DataFrame:
             [float("inf"), float("-inf")], float("nan")
         )
 
+    # Derived: Gold/Oil ratio (high ratio = gold outperforming, risk-off signal)
+    if "Oil_Close" in combined.columns:
+        oil = combined["Oil_Close"].replace(0, float("nan"))
+        combined["Gold_Oil_Ratio"] = combined["Close"] / oil
+        combined["Gold_Oil_Ratio"] = combined["Gold_Oil_Ratio"].replace(
+            [float("inf"), float("-inf")], float("nan")
+        )
+
     # Derived: Approximate MCX price (INR per 10g)
     if "USDINR_Close" in combined.columns:
         combined["MCX_Approx"] = combined["Close"] * combined["USDINR_Close"] * MCX_CONVERSION
@@ -150,11 +171,11 @@ def fetch_combined(period: str = "1y") -> pd.DataFrame:
     return combined
 
 
-def _safe_last_price(ticker: str):
+def _safe_last_price(ticker: str) -> Optional[float]:
     """Return last close price for a ticker, trying fast_info then history fallback."""
     try:
         val = getattr(yf.Ticker(ticker).fast_info, "last_price", None)
-        if val:
+        if val and float(val) > 0:
             return float(val)
     except Exception:
         pass
@@ -171,7 +192,7 @@ def fetch_india_context() -> dict:
     """
     Fetch Indian market snapshot: USD/INR, MCX approximate gold price, Nifty, VIX.
     """
-    result = {"usdinr": None, "mcx_approx": None, "nifty": None, "vix": None}
+    result = {"usdinr": None, "mcx_approx": None, "nifty": None, "vix": None, "oil": None}
 
     usdinr = _safe_last_price(USDINR_TICKER)
     if usdinr:
@@ -181,6 +202,11 @@ def fetch_india_context() -> dict:
             result["mcx_approx"] = round(comex * usdinr * MCX_CONVERSION, 0)
 
     result["nifty"] = _safe_last_price(NIFTY_TICKER)
+
+    # Crude oil live price
+    oil = _safe_last_price(OIL_TICKER)
+    if oil:
+        result["oil"] = round(oil, 2)
 
     # VIX — try each fallback
     for sym in [VIX_TICKER] + VIX_FALLBACKS:
