@@ -10,11 +10,13 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 
-GOLD_TICKER = "GC=F"       # Gold Futures (most accurate spot-like price)
-GOLD_ETF    = "GLD"        # SPDR Gold Shares ETF (highly liquid proxy)
-DXY_TICKER  = "DX-Y.NYB"  # US Dollar Index (inverse correlation with gold)
-SPY_TICKER  = "SPY"        # S&P 500 ETF (risk-on/off signal)
-TLT_TICKER  = "TLT"        # 20yr Treasury ETF (safe-haven signal)
+GOLD_TICKER   = "GC=F"       # Gold Futures (most accurate spot-like price)
+GOLD_ETF      = "GLD"        # SPDR Gold Shares ETF (highly liquid proxy)
+DXY_TICKER    = "DX-Y.NYB"  # US Dollar Index (inverse correlation with gold)
+SPY_TICKER    = "SPY"        # S&P 500 ETF (risk-on/off signal)
+TLT_TICKER    = "TLT"        # 20yr Treasury ETF (safe-haven signal)
+VIX_TICKER    = "^VIX"       # CBOE Volatility Index (fear → gold rises)
+SILVER_TICKER = "SI=F"       # Silver Futures (gold/silver ratio signal)
 
 
 def fetch_gold_ohlcv(
@@ -62,12 +64,14 @@ def fetch_gold_realtime() -> dict:
 def fetch_macro_context(period: str = "1y") -> pd.DataFrame:
     """
     Fetch macro context indicators aligned to gold dates.
-    Columns: DXY_Close, SPY_Close, TLT_Close
+    Columns: DXY_Close, SPY_Close, TLT_Close, VIX_Close, Silver_Close, Gold_Silver_Ratio
     """
     tickers = {
-        "DXY": DXY_TICKER,
-        "SPY": SPY_TICKER,
-        "TLT": TLT_TICKER,
+        "DXY":    DXY_TICKER,
+        "SPY":    SPY_TICKER,
+        "TLT":    TLT_TICKER,
+        "VIX":    VIX_TICKER,
+        "Silver": SILVER_TICKER,
     }
     frames = {}
     for name, sym in tickers.items():
@@ -100,4 +104,9 @@ def fetch_combined(period: str = "1y") -> pd.DataFrame:
 
     combined = gold.join(macro, how="left")
     combined.ffill(inplace=True)
+
+    # Derived: Gold/Silver ratio (classic valuation signal)
+    if "Silver_Close" in combined.columns:
+        combined["Gold_Silver_Ratio"] = combined["Close"] / combined["Silver_Close"].replace(0, float("nan"))
+
     return combined
