@@ -307,29 +307,34 @@ chg_cls = "ticker-change-up" if change >= 0 else "ticker-change-down"
 chg_sym = "▲" if change >= 0 else "▼"
 
 vix_html, gsr_html = "", ""
-if "VIX_Close" in df.columns and df["VIX_Close"].notna().any():
-    vix  = df["VIX_Close"].iloc[-1]
-    dvix = vix - df["VIX_Close"].iloc[-2]
+
+# VIX — use live value from india context (which tries VIXY then ^VIX fallbacks)
+vix_live = india.get("vix")
+if vix_live:
+    vix_prev = df["VIX_Close"].iloc[-2] if "VIX_Close" in df.columns and df["VIX_Close"].notna().sum() > 1 else vix_live
+    dvix = vix_live - vix_prev
     vcls = "ticker-change-up" if dvix >= 0 else "ticker-change-down"
+    vsym = "▲" if dvix >= 0 else "▼"
     vix_html = f"""
     <div class="ticker-card">
         <div class="ticker-label">VIX · Fear Index</div>
-        <div class="ticker-value">{vix:.1f}</div>
-        <div class="{vcls}">{chg_sym if dvix>=0 else '▼'} {abs(dvix):.1f} today</div>
+        <div class="ticker-value">{vix_live:.1f}</div>
+        <div class="{vcls}">{vsym} {abs(dvix):.2f} today</div>
     </div>"""
 else:
-    vix_html = '<div class="ticker-card"><div class="ticker-label">VIX</div><div class="ticker-value">—</div></div>'
+    vix_html = '<div class="ticker-card"><div class="ticker-label">VIX · Fear Index</div><div class="ticker-value" style="color:#444">N/A</div><div class="ticker-change-flat">via VIXY ETF</div></div>'
 
-if "Gold_Silver_Ratio" in df.columns and df["Gold_Silver_Ratio"].notna().any():
-    gsr = df["Gold_Silver_Ratio"].iloc[-1]
+# Gold/Silver ratio — SLV is now used instead of SI=F futures
+if "Silver_Close" in df.columns and df["Silver_Close"].notna().any():
+    gsr = df["Close"].iloc[-1] / df["Silver_Close"].iloc[-1]
     gsr_html = f"""
     <div class="ticker-card">
         <div class="ticker-label">Gold / Silver Ratio</div>
         <div class="ticker-value">{gsr:.1f}</div>
-        <div class="ticker-change-flat">historical avg ~65</div>
+        <div class="ticker-change-flat">historical avg ~65–80</div>
     </div>"""
 else:
-    gsr_html = '<div class="ticker-card"><div class="ticker-label">G/S Ratio</div><div class="ticker-value">—</div></div>'
+    gsr_html = '<div class="ticker-card"><div class="ticker-label">G/S Ratio</div><div class="ticker-value" style="color:#444">N/A</div><div class="ticker-change-flat">via SLV ETF</div></div>'
 
 # India cards
 mcx   = india.get("mcx_approx")

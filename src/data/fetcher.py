@@ -15,8 +15,9 @@ GOLD_ETF       = "GLD"        # SPDR Gold Shares ETF (highly liquid proxy)
 DXY_TICKER     = "DX-Y.NYB"  # US Dollar Index (inverse correlation with gold)
 SPY_TICKER     = "SPY"        # S&P 500 ETF (risk-on/off signal)
 TLT_TICKER     = "TLT"        # 20yr Treasury ETF (safe-haven signal)
-VIX_TICKER     = "^VIX"       # CBOE Volatility Index (fear → gold rises)
-SILVER_TICKER  = "SI=F"       # Silver Futures (gold/silver ratio signal)
+VIX_TICKER     = "VIXY"       # ProShares VIX ETF — more reliable than ^VIX on cloud
+VIX_FALLBACKS  = ["^VIX", "VIXM"]
+SILVER_TICKER  = "SLV"        # iShares Silver ETF — more reliable than SI=F futures
 USDINR_TICKER  = "USDINR=X"  # USD/INR exchange rate (for MCX price conversion)
 NIFTY_TICKER   = "^NSEI"     # Nifty 50 (Indian equity market)
 
@@ -77,7 +78,6 @@ def fetch_macro_context(period: str = "1y") -> pd.DataFrame:
         "DXY":    DXY_TICKER,
         "SPY":    SPY_TICKER,
         "TLT":    TLT_TICKER,
-        "VIX":    VIX_TICKER,
         "Silver": SILVER_TICKER,
         "USDINR": USDINR_TICKER,
         "Nifty":  NIFTY_TICKER,
@@ -90,6 +90,16 @@ def fetch_macro_context(period: str = "1y") -> pd.DataFrame:
                 frames[f"{name}_Close"] = df["Close"]
         except Exception:
             pass
+
+    # VIX — try primary ETF then index fallbacks
+    for vix_sym in [VIX_TICKER] + VIX_FALLBACKS:
+        try:
+            df = yf.Ticker(vix_sym).history(period=period, interval="1d", auto_adjust=True)
+            if not df.empty:
+                frames["VIX_Close"] = df["Close"]
+                break
+        except Exception:
+            continue
 
     if not frames:
         return pd.DataFrame()
@@ -125,27 +135,43 @@ def fetch_combined(period: str = "1y") -> pd.DataFrame:
     return combined
 
 
+def _safe_last_price(ticker: str):
+    """Return last close price for a ticker, trying fast_info then history fallback."""
+    try:
+        val = getattr(yf.Ticker(ticker).fast_info, "last_price", None)
+        if val:
+            return float(val)
+    except Exception:
+        pass
+    try:
+        df = yf.Ticker(ticker).history(period="5d", interval="1d")
+        if not df.empty:
+            return float(df["Close"].iloc[-1])
+    except Exception:
+        pass
+    return None
+
+
 def fetch_india_context() -> dict:
     """
-    Fetch Indian market snapshot: USD/INR rate and MCX approximate gold price.
-    Returns a dict for display in the dashboard.
+    Fetch Indian market snapshot: USD/INR, MCX approximate gold price, Nifty, VIX.
     """
-    result = {"usdinr": None, "mcx_approx": None, "nifty": None}
-    try:
-        inr_info = yf.Ticker(USDINR_TICKER).fast_info
-        usdinr   = getattr(inr_info, "last_price", None)
-        if usdinr:
-            result["usdinr"]    = round(usdinr, 2)
-            # Get latest COMEX price
-            gold_info = yf.Ticker(GOLD_TICKER).fast_info
-            comex = getattr(gold_info, "last_price", None)
-            if comex:
-                result["mcx_approx"] = round(comex * usdinr * MCX_CONVERSION, 0)
-    except Exception:
-        pass
-    try:
-        nifty_info   = yf.Ticker(NIFTY_TICKER).fast_info
-        result["nifty"] = getattr(nifty_info, "last_price", None)
-    except Exception:
-        pass
+    result = {"usdinr": None, "mcx_approx": None, "nifty": None, "vix": None}
+
+    usdinr = _safe_last_price(USDINR_TICKER)
+    if usdinr:
+        result["usdinr"] = round(usdinr, 2)
+        comex = _safe_last_price(GOLD_TICKER)
+        if comex:
+            result["mcx_approx"] = round(comex * usdinr * MCX_CONVERSION, 0)
+
+    result["nifty"] = _safe_last_price(NIFTY_TICKER)
+
+    # VIX — try each fallback
+    for sym in [VIX_TICKER] + VIX_FALLBACKS:
+        v = _safe_last_price(sym)
+        if v:
+            result["vix"] = round(v, 2)
+            break
+
     return result
