@@ -1,8 +1,20 @@
+# Secrets — never commit
 .env
+.streamlit/secrets.toml
+
+# Python cache
 __pycache__/
 *.pyc
 *.pyo
+
+# macOS
 .DS_Store
-src/models/saved/
-*.joblib
-.streamlit/secrets.toml
+
+# Virtual env
+.venv/
+venv/
+env/
+
+# NOTE: src/models/saved/ is intentionally tracked so Streamlit Cloud
+# can load pre-trained models without retraining from scratch.
+# Train locally with `make train`, then commit the .joblib + .json files.

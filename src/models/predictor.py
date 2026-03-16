@@ -13,9 +13,11 @@ Also provides 80% prediction interval via quantile regression.
 """
 
 import os
+import json
 import joblib
 import numpy as np
 import pandas as pd
+from datetime import datetime
 from sklearn.ensemble import (
     GradientBoostingRegressor, GradientBoostingClassifier,
     RandomForestRegressor, RandomForestClassifier,
@@ -30,6 +32,18 @@ from typing import Optional
 MODEL_DIR        = os.path.join(os.path.dirname(__file__), "saved")
 PRICE_MODEL_PATH = os.path.join(MODEL_DIR, "price_model.joblib")
 DIR_MODEL_PATH   = os.path.join(MODEL_DIR, "direction_model.joblib")
+META_PATH        = os.path.join(MODEL_DIR, "model_meta.json")
+
+
+def load_model_meta() -> dict:
+    """Return saved training metadata, or empty dict if not available."""
+    if os.path.exists(META_PATH):
+        try:
+            with open(META_PATH) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
 
 # Base features (technical indicators + macro)
 BASE_FEATURE_COLS = [
@@ -267,6 +281,18 @@ def train(
             PRICE_MODEL_PATH,
         )
         joblib.dump({"gbm": gbm_dir, "rf": rf_dir}, DIR_MODEL_PATH)
+        # Persist training metadata for UI display
+        meta = {
+            "trained_at":         datetime.utcnow().isoformat() + "Z",
+            "horizon_days":       horizon,
+            "price_mape":         round(mape * 100, 2),
+            "direction_accuracy": round(dir_acc * 100, 2),
+            "train_samples":      len(X),
+            "test_samples":       len(test_idx),
+            "feature_count":      len(X.columns),
+        }
+        with open(META_PATH, "w") as f:
+            json.dump(meta, f, indent=2)
 
     # Feature importance from GBM (primary model)
     feat_imp = dict(zip(

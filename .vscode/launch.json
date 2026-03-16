@@ -1,0 +1,32 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "▶ Run Dashboard",
+            "type": "python",
+            "request": "launch",
+            "module": "streamlit",
+            "args": ["run", "app.py", "--server.headless", "false"],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "🧠 Train Model (5y)",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/train_local.py",
+            "args": ["--period", "5y", "--horizon", "1"],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "🔬 Debug Predictor",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/train_local.py",
+            "args": ["--period", "1y", "--horizon", "1", "--verbose"],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        }
+    ]
+}
