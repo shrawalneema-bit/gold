@@ -50,12 +50,15 @@ _analyzer.lexicon.update(_GOLD_LEXICON)
 
 # RSS feeds that reliably work from cloud/server environments
 RSS_FEEDS = {
-    "Google News: gold price":    "https://news.google.com/rss/search?q=gold+price&hl=en-US&gl=US&ceid=US:en",
-    "Google News: gold futures":  "https://news.google.com/rss/search?q=gold+futures+XAU&hl=en-US&gl=US&ceid=US:en",
-    "Yahoo Finance GC=F":         "https://finance.yahoo.com/rss/headline?s=GC%3DF",
-    # Indian sources
-    "Google News India: MCX gold":"https://news.google.com/rss/search?q=MCX+gold+price+India&hl=en-IN&gl=IN&ceid=IN:en",
-    "Google News India: gold INR": "https://news.google.com/rss/search?q=gold+price+India+rupee&hl=en-IN&gl=IN&ceid=IN:en",
+    # Bing News RSS — very reliable from cloud servers, no auth required
+    "Bing: gold price":   "https://www.bing.com/news/search?q=gold+price&format=RSS",
+    "Bing: gold futures": "https://www.bing.com/news/search?q=gold+futures+XAU+bullion&format=RSS",
+    "Bing: India gold":   "https://www.bing.com/news/search?q=MCX+gold+price+India&format=RSS",
+    # BBC Business — reliable public RSS
+    "BBC Business":       "https://feeds.bbci.co.uk/news/business/rss.xml",
+    # Yahoo Finance ETF headlines
+    "Yahoo GLD":          "https://finance.yahoo.com/rss/headline?s=GLD",
+    "Yahoo GC=F":         "https://finance.yahoo.com/rss/headline?s=GC%3DF",
 }
 
 GOLD_KEYWORDS = re.compile(
@@ -145,11 +148,12 @@ def _fetch_rss(feed_url: str, source_name: str, timeout: int = 10) -> list[dict]
 
 def _fetch_yfinance_news(tickers: list[str] = None) -> list[dict]:
     """
-    Fetch news via yfinance — works reliably from any environment
-    because it uses the same session as the price data.
+    Fetch news via yfinance — works reliably from any environment.
+    Uses ETF tickers (GLD, SLV, IAU) which have richer news than futures (GC=F).
     """
     if tickers is None:
-        tickers = ["GC=F", "GLD", "GOLD"]
+        # ETFs first — they have the most news articles on yfinance
+        tickers = ["GLD", "IAU", "SLV", "GDX", "GOLD", "GC=F"]
 
     seen_urls = set()
     articles  = []
