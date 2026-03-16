@@ -3,12 +3,13 @@ Gold Price Predictor — Professional Streamlit Dashboard
 """
 
 import html as html_lib
+import time
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
-import time
 
 from src.data.fetcher import fetch_combined, fetch_gold_realtime, fetch_india_context
 from src.analysis.technical import add_all_indicators, get_signal_summary
@@ -153,6 +154,31 @@ footer {visibility: hidden;}
 }
 .signal-meta { font-size: 0.75rem; color: #555; }
 
+/* ── Trading recommendation card ── */
+.trade-card {
+    background: #0f0f1a;
+    border: 1px solid #1e1e30;
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 28px;
+}
+.trade-card-buy   { border-color: #26a69a50; }
+.trade-card-sell  { border-color: #ef535050; }
+.trade-card-hold  { border-color: #c9a84c50; }
+.trade-action {
+    font-size: 1.2rem;
+    font-weight: 700;
+    margin-bottom: 6px;
+}
+.trade-reason { font-size: 0.78rem; color: #888; line-height: 1.6; }
+
+/* ── Confidence band ── */
+.conf-band {
+    font-size: 0.72rem;
+    color: #555;
+    margin-top: 4px;
+}
+
 /* ── News cards ── */
 .news-card {
     background: #0f0f1a;
@@ -227,14 +253,16 @@ with st.sidebar:
     <div style='font-size:0.72rem; color:#555; line-height:1.8'>
     <b style='color:#777'>Data</b><br>
     Gold Futures · GC=F · yfinance<br>
-    DXY · SPY · TLT · VIX · Silver<br><br>
+    DXY · SPY · TLT · VIX · Silver · Oil<br><br>
     <b style='color:#777'>News</b><br>
-    yfinance · Google News RSS<br><br>
+    Reddit · yfinance · Google News RSS<br><br>
     <b style='color:#777'>Sentiment</b><br>
-    VADER (gold-tuned lexicon)<br><br>
+    VADER · gold-tuned lexicon (50+ terms)<br>
+    Source reliability weighting<br><br>
     <b style='color:#777'>Model</b><br>
     GBM + Random Forest ensemble<br>
-    ~40 features · time-series CV
+    Quantile bounds for 80% interval<br>
+    ~45 features · time-series CV
     </div>
     """, unsafe_allow_html=True)
 
@@ -276,9 +304,13 @@ with st.spinner(""):
 # ── Compute values ────────────────────────────────────────────────────────────
 last   = realtime.get("last_price") or df["Close"].iloc[-1]
 prev   = realtime.get("previous_close") or df["Close"].iloc[-2]
+# Prevent division by zero when prev is 0 or None
+if not prev:
+    prev = df["Close"].iloc[-2]
 change = last - prev
-pct    = change / prev * 100
-tech   = get_signal_summary(df)
+pct    = (change / prev * 100) if prev else 0.0
+
+tech             = get_signal_summary(df)
 sentiment_series = build_daily_sentiment_series(sentiment.get("articles", []))
 
 with st.spinner(""):
@@ -304,11 +336,9 @@ st.markdown(f"""
 # ── Ticker bar ────────────────────────────────────────────────────────────────
 day_hi  = realtime.get("day_high")  or df["High"].iloc[-1]
 day_lo  = realtime.get("day_low")   or df["Low"].iloc[-1]
-chg_cls = "ticker-change-up" if change >= 0 else "ticker-change-down"
-chg_sym = "▲" if change >= 0 else "▼"
 
 def _card(label, value, sub, border=""):
-    """Render a single ticker card — no variable interpolation into large f-strings."""
+    """Render a single ticker card."""
     style = f' style="border-color:{border}"' if border else ""
     st.markdown(
         f'<div class="ticker-card"{style}>'
@@ -331,8 +361,8 @@ def _card_change(label, value, change_val, change_str):
         unsafe_allow_html=True,
     )
 
-# Row 1: Global prices
-r1 = st.columns(5)
+# Row 1: Global prices (6 cards)
+r1 = st.columns(6)
 with r1[0]: _card_change("Gold Futures · GC=F", f"${last:,.2f}", change, f"${abs(change):.2f} ({pct:+.2f}%)")
 with r1[1]: _card("Day High", f"${day_hi:,.2f}", "Session high")
 with r1[2]: _card("Day Low",  f"${day_lo:,.2f}", "Session low")
@@ -346,8 +376,21 @@ with r1[3]:
     else:
         _card("VIX · Fear Index", "—", "Loading…")
 
-# Gold/Silver ratio
+# Crude oil
+oil_live = india.get("oil")
 with r1[4]:
+    if oil_live:
+        oil_prev = df["Oil_Close"].iloc[-2] if "Oil_Close" in df.columns and df["Oil_Close"].notna().sum() > 1 else oil_live
+        oil_chg  = oil_live - oil_prev
+        _card_change("Crude Oil · CL=F", f"${oil_live:.2f}", oil_chg, f"${abs(oil_chg):.2f} today")
+    elif "Oil_Close" in df.columns and df["Oil_Close"].notna().any():
+        oil_v = df["Oil_Close"].iloc[-1]
+        _card("Crude Oil · CL=F", f"${oil_v:.2f}", "per barrel")
+    else:
+        _card("Crude Oil", "—", "Loading…")
+
+# Gold/Silver ratio
+with r1[5]:
     if "Silver_Close" in df.columns and df["Silver_Close"].notna().any():
         sv = df["Silver_Close"].iloc[-1]
         gsr = df["Close"].iloc[-1] / sv if sv and sv > 0 else None
@@ -383,6 +426,8 @@ def badge(label):
 # Technical card
 rsi_val = tech["rsi"]
 rsi_col = "#26a69a" if rsi_val < 40 else "#ef5350" if rsi_val > 65 else "#c9a84c"
+cci_val = tech.get("cci")
+cci_str = f" · CCI {cci_val:.0f}" if cci_val is not None else ""
 
 # Sentiment card
 sl = sentiment["label"]
@@ -391,13 +436,14 @@ sl = sentiment["label"]
 if pred:
     dir_lbl = pred["predicted_direction"]
     dir_col = "#26a69a" if dir_lbl == "Up" else "#ef5350"
+    conf_pct = max(pred["up_probability"], pred["down_probability"])
 
 tech_html = f"""
 <div class="signal-card">
   <div class="signal-card-label">Technical Analysis</div>
   {badge(tech['overall'])}
   <div class="signal-value" style="color:{rsi_col}">{rsi_val:.0f}</div>
-  <div class="signal-meta">RSI-14 &nbsp;·&nbsp; Score {tech['score']:+d}/5 &nbsp;·&nbsp; MACD {'▲' if (tech.get('macd') or 0) > (tech.get('macd_signal') or 0) else '▼'}</div>
+  <div class="signal-meta">RSI-14 &nbsp;·&nbsp; Score {tech['score']:+d}/5 &nbsp;·&nbsp; MACD {'▲' if (tech.get('macd') or 0) > (tech.get('macd_signal') or 0) else '▼'}{cci_str}</div>
 </div>"""
 
 sent_html = f"""
@@ -413,23 +459,106 @@ sent_html = f"""
 </div>"""
 
 if pred:
+    conf_band_str = ""
+    if pred.get("predicted_price_low") and pred.get("predicted_price_high"):
+        conf_band_str = (
+            f"<div class='conf-band'>80% range: "
+            f"${pred['predicted_price_low']:,.0f} – ${pred['predicted_price_high']:,.0f}</div>"
+        )
     ml_html = f"""
 <div class="signal-card">
   <div class="signal-card-label">ML Forecast · +{pred['horizon_days']}d</div>
   {badge(dir_lbl)}
   <div class="signal-value" style="color:{dir_col}">${pred['predicted_price']:,.2f}</div>
   <div class="signal-meta">
-    {pred['expected_change_pct']:+.2f}% change &nbsp;·&nbsp;
-    Confidence {max(pred['up_probability'], pred['down_probability']):.0f}% &nbsp;·&nbsp;
+    {pred['expected_change_pct']:+.2f}% &nbsp;·&nbsp;
+    Confidence {conf_pct:.0f}% &nbsp;·&nbsp;
     MAPE {pred.get('price_mape','?')}%
   </div>
+  {conf_band_str}
 </div>"""
 else:
     ml_html = '<div class="signal-card"><div class="signal-card-label">ML Forecast</div><div class="signal-meta">Model unavailable</div></div>'
 
 st.markdown(f'<div class="signal-grid">{tech_html}{sent_html}{ml_html}</div>', unsafe_allow_html=True)
 
-# ── RSI Gauge + Sentiment Donut ───────────────────────────────────────────────
+# ── Trading Recommendation ────────────────────────────────────────────────────
+def _trading_recommendation(tech: dict, sentiment: dict, pred: Optional[dict]) -> tuple[str, str, str]:
+    """
+    Aggregate technical, sentiment and ML signals into a single trade suggestion.
+    Returns (action, color_class, reason_html).
+    """
+    bull_count = 0
+    bear_count = 0
+    reasons = []
+
+    # Technical score
+    ts = tech.get("score", 0)
+    if ts >= 2:
+        bull_count += 2
+        reasons.append(f"Technical signals bullish (score {ts:+d}/5)")
+    elif ts <= -2:
+        bear_count += 2
+        reasons.append(f"Technical signals bearish (score {ts:+d}/5)")
+    else:
+        reasons.append(f"Technical signals mixed (score {ts:+d}/5)")
+
+    # Sentiment
+    avg_c = sentiment.get("avg_compound", 0)
+    if avg_c >= 0.05:
+        bull_count += 1
+        reasons.append(f"Sentiment bullish ({sentiment.get('bullish_pct',0):.0f}% bullish articles)")
+    elif avg_c <= -0.05:
+        bear_count += 1
+        reasons.append(f"Sentiment bearish ({sentiment.get('bearish_pct',0):.0f}% bearish articles)")
+    else:
+        reasons.append("Sentiment neutral")
+
+    # ML
+    if pred:
+        if pred["predicted_direction"] == "Up":
+            bull_count += 1
+            reasons.append(f"ML forecasts +{pred['expected_change_pct']:.2f}% ({max(pred['up_probability'], pred['down_probability']):.0f}% confidence)")
+        else:
+            bear_count += 1
+            reasons.append(f"ML forecasts {pred['expected_change_pct']:.2f}% ({max(pred['up_probability'], pred['down_probability']):.0f}% confidence)")
+
+    if bull_count >= 3:
+        action = "BUY / LONG"
+        cls    = "trade-card-buy"
+        color  = "#26a69a"
+    elif bear_count >= 3:
+        action = "SELL / SHORT"
+        cls    = "trade-card-sell"
+        color  = "#ef5350"
+    elif bull_count > bear_count:
+        action = "CAUTIOUS BUY"
+        cls    = "trade-card-buy"
+        color  = "#26a69a"
+    elif bear_count > bull_count:
+        action = "CAUTIOUS SELL"
+        cls    = "trade-card-sell"
+        color  = "#ef5350"
+    else:
+        action = "HOLD / NEUTRAL"
+        cls    = "trade-card-hold"
+        color  = "#c9a84c"
+
+    reason_html = " &nbsp;·&nbsp; ".join(reasons)
+    return action, cls, color, reason_html
+
+action, trade_cls, trade_color, trade_reason = _trading_recommendation(tech, sentiment, pred)
+st.markdown(
+    f'<div class="trade-card {trade_cls}">'
+    f'<div style="font-size:0.65rem;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Aggregated Signal (Educational)</div>'
+    f'<div class="trade-action" style="color:{trade_color}">{action}</div>'
+    f'<div class="trade-reason">{trade_reason}</div>'
+    f'<div style="font-size:0.65rem;color:#333;margin-top:10px">⚠️ Not financial advice — for educational purposes only.</div>'
+    f'</div>',
+    unsafe_allow_html=True,
+)
+
+# ── RSI Gauge + Sentiment Donut + BB gauge ────────────────────────────────────
 col_gauge, col_donut, col_bb = st.columns(3)
 
 with col_gauge:
@@ -459,7 +588,7 @@ with col_gauge:
         height=220, margin=dict(l=20, r=20, t=40, b=10),
         paper_bgcolor="#0f0f1a", font_color="#888",
     )
-    st.plotly_chart(fig_rsi, width="stretch")
+    st.plotly_chart(fig_rsi, use_container_width=True)
 
 with col_donut:
     bull = sentiment["bullish_pct"]
@@ -485,14 +614,15 @@ with col_donut:
         showlegend=True,
         legend=dict(font=dict(size=10, color="#666"), bgcolor="rgba(0,0,0,0)"),
     )
-    st.plotly_chart(fig_sent, width="stretch")
+    st.plotly_chart(fig_sent, use_container_width=True)
 
 with col_bb:
     close_now = df["Close"].iloc[-1]
     bb_hi = df["BB_High"].iloc[-1] if "BB_High" in df.columns else close_now * 1.02
     bb_lo = df["BB_Low"].iloc[-1]  if "BB_Low"  in df.columns else close_now * 0.98
-    bb_mi = df["BB_Mid"].iloc[-1]  if "BB_Mid"  in df.columns else close_now
     bb_pct = (close_now - bb_lo) / (bb_hi - bb_lo) * 100 if bb_hi != bb_lo else 50
+    # Clamp to [0, 100] in case of extreme moves outside bands
+    bb_pct = max(0.0, min(100.0, bb_pct))
 
     fig_bb = go.Figure(go.Indicator(
         mode="gauge+number",
@@ -515,7 +645,7 @@ with col_bb:
         height=220, margin=dict(l=20, r=20, t=40, b=10),
         paper_bgcolor="#0f0f1a", font_color="#888",
     )
-    st.plotly_chart(fig_bb, width="stretch")
+    st.plotly_chart(fig_bb, use_container_width=True)
 
 st.markdown('<hr class="gold-divider">', unsafe_allow_html=True)
 
@@ -526,22 +656,41 @@ ci_col, sr_col = st.columns([3,1])
 with ci_col:
     chart_indicators = st.multiselect(
         "Overlay indicators",
-        ["SMA_20","SMA_50","SMA_200","EMA_12","EMA_26","BB_High","BB_Low","BB_Mid"],
+        ["SMA_20","SMA_50","SMA_200","EMA_12","EMA_26",
+         "BB_High","BB_Low","BB_Mid",
+         "Stoch_K","Stoch_D","Williams_R","CCI_20"],
         default=["SMA_20","SMA_50","BB_High","BB_Low"],
         label_visibility="collapsed",
     )
 with sr_col:
     show_sr = st.checkbox("Support / Resistance", value=True)
 
-rows        = 3 if show_vol else 2
-row_heights = [0.55, 0.25, 0.20] if show_vol else [0.65, 0.35]
-subtitles   = ["", "RSI · MACD"] + (["Volume"] if show_vol else [])
+# Determine sub-chart rows
+price_overlays  = [i for i in chart_indicators if i not in ("Stoch_K","Stoch_D","Williams_R","CCI_20")]
+osc_overlays    = [i for i in chart_indicators if i in ("Stoch_K","Stoch_D","Williams_R","CCI_20")]
+has_osc         = bool(osc_overlays)
+
+rows        = (2 if show_vol else 1) + 1 + (1 if has_osc else 0)   # price + RSI/MACD [+ osc] [+ vol]
+row_heights_base = [0.50, 0.22]
+if has_osc:
+    row_heights_base.append(0.15)
+if show_vol:
+    row_heights_base.append(0.13)
+# Normalise so they sum to 1
+total = sum(row_heights_base)
+row_heights = [r / total for r in row_heights_base]
+
+subtitle_list = ["", "RSI · MACD"]
+if has_osc:
+    subtitle_list.append("Oscillators")
+if show_vol:
+    subtitle_list.append("Volume")
 
 fig = make_subplots(
-    rows=rows, cols=1,
+    rows=len(row_heights), cols=1,
     shared_xaxes=True,
     row_heights=row_heights,
-    subplot_titles=subtitles,
+    subplot_titles=subtitle_list,
     vertical_spacing=0.03,
 )
 
@@ -553,13 +702,13 @@ fig.add_trace(go.Candlestick(
     decreasing_line_color="#ef5350", decreasing_fillcolor="rgba(239,83,80,0.13)",
 ), row=1, col=1)
 
-# Indicator overlays
+# Indicator overlays on price chart
 COLORS = {
     "SMA_20": "#c9a84c", "SMA_50": "#f57c00", "SMA_200": "#ef5350",
     "EMA_12": "#42a5f5", "EMA_26": "#1976d2",
     "BB_High": "#4fc3f7", "BB_Low": "#4fc3f7", "BB_Mid": "rgba(79,195,247,0.5)",
 }
-for ind in chart_indicators:
+for ind in price_overlays:
     if ind in df.columns:
         fig.add_trace(go.Scatter(
             x=df.index, y=df[ind], name=ind,
@@ -568,7 +717,7 @@ for ind in chart_indicators:
             opacity=0.85,
         ), row=1, col=1)
 
-if "BB_High" in chart_indicators and "BB_Low" in chart_indicators:
+if "BB_High" in price_overlays and "BB_Low" in price_overlays:
     fig.add_trace(go.Scatter(
         x=pd.concat([df.index.to_series(), df.index.to_series()[::-1]]),
         y=pd.concat([df["BB_High"], df["BB_Low"][::-1]]),
@@ -576,7 +725,7 @@ if "BB_High" in chart_indicators and "BB_Low" in chart_indicators:
         line=dict(color="rgba(0,0,0,0)"), showlegend=False, name="BB Band",
     ), row=1, col=1)
 
-# RSI
+# RSI (row 2)
 fig.add_trace(go.Scatter(
     x=df.index, y=df["RSI_14"], name="RSI",
     line=dict(color="#ce93d8", width=1.5),
@@ -586,7 +735,7 @@ fig.add_hrect(y0=0,  y1=30,  fillcolor="rgba(38,166,154,0.06)", line_width=0, ro
 fig.add_hline(y=70, line_dash="dash", line_color="rgba(239,83,80,0.25)",  line_width=1, row=2, col=1)
 fig.add_hline(y=30, line_dash="dash", line_color="rgba(38,166,154,0.25)", line_width=1, row=2, col=1)
 
-# MACD
+# MACD (row 2, same subplot)
 fig.add_trace(go.Scatter(
     x=df.index, y=df["MACD"], name="MACD",
     line=dict(color="#4fc3f7", width=1.2),
@@ -601,6 +750,40 @@ fig.add_trace(go.Bar(
     marker_color=hist_c, opacity=0.5,
 ), row=2, col=1)
 
+# Oscillator sub-chart (row 3 if present)
+osc_row = 3 if has_osc else None
+OSC_COLORS = {
+    "Stoch_K": "#80cbc4", "Stoch_D": "#26a69a",
+    "Williams_R": "#ffcc80", "CCI_20": "#f48fb1",
+}
+if has_osc and osc_row:
+    for ind in osc_overlays:
+        if ind in df.columns:
+            fig.add_trace(go.Scatter(
+                x=df.index, y=df[ind], name=ind,
+                line=dict(color=OSC_COLORS.get(ind, "#aaa"), width=1.2),
+            ), row=osc_row, col=1)
+    # Reference lines for oscillators
+    if "Stoch_K" in osc_overlays or "Stoch_D" in osc_overlays:
+        fig.add_hline(y=80, line_dash="dash", line_color="rgba(239,83,80,0.25)", line_width=1, row=osc_row, col=1)
+        fig.add_hline(y=20, line_dash="dash", line_color="rgba(38,166,154,0.25)", line_width=1, row=osc_row, col=1)
+    if "CCI_20" in osc_overlays:
+        fig.add_hline(y=100,  line_dash="dash", line_color="rgba(239,83,80,0.25)",  line_width=1, row=osc_row, col=1)
+        fig.add_hline(y=-100, line_dash="dash", line_color="rgba(38,166,154,0.25)", line_width=1, row=osc_row, col=1)
+    if "Williams_R" in osc_overlays:
+        fig.add_hline(y=-20,  line_dash="dash", line_color="rgba(239,83,80,0.25)",  line_width=1, row=osc_row, col=1)
+        fig.add_hline(y=-80,  line_dash="dash", line_color="rgba(38,166,154,0.25)", line_width=1, row=osc_row, col=1)
+
+# Volume row
+vol_row = (osc_row + 1 if osc_row else 3) if show_vol else None
+if show_vol and vol_row and "Volume" in df.columns:
+    vol_c = ["#26a69a" if df["Close"].iloc[i] >= df["Open"].iloc[i] else "#ef5350"
+             for i in range(len(df))]
+    fig.add_trace(go.Bar(
+        x=df.index, y=df["Volume"], name="Volume",
+        marker_color=vol_c, opacity=0.6,
+    ), row=vol_row, col=1)
+
 # Support & Resistance — pivot from recent swing highs/lows
 if show_sr:
     window = 20
@@ -610,17 +793,39 @@ if show_sr:
     if len(resistance) > 0 and len(support) > 0:
         r_level = resistance.iloc[-1]
         s_level = support.iloc[-1]
-        fig.add_hline(y=r_level, line_dash="dot", line_color="rgba(239,83,80,0.4)", line_width=1.5,
-                      annotation_text=f"R ${r_level:,.0f}", annotation_font_color="#ef5350",
-                      annotation_font_size=10, row=1, col=1)
-        fig.add_hline(y=s_level, line_dash="dot", line_color="rgba(38,166,154,0.4)", line_width=1.5,
-                      annotation_text=f"S ${s_level:,.0f}", annotation_font_color="#26a69a",
-                      annotation_font_size=10, row=1, col=1)
+        if pd.notna(r_level) and r_level > 0:
+            fig.add_hline(y=r_level, line_dash="dot", line_color="rgba(239,83,80,0.4)", line_width=1.5,
+                          annotation_text=f"R ${r_level:,.0f}", annotation_font_color="#ef5350",
+                          annotation_font_size=10, row=1, col=1)
+        if pd.notna(s_level) and s_level > 0:
+            fig.add_hline(y=s_level, line_dash="dot", line_color="rgba(38,166,154,0.4)", line_width=1.5,
+                          annotation_text=f"S ${s_level:,.0f}", annotation_font_color="#26a69a",
+                          annotation_font_size=10, row=1, col=1)
 
-# ML predicted price marker
+# ML predicted price marker + confidence interval band
 if pred:
-    import numpy as np
     future_x = [df.index[-1] + pd.Timedelta(days=pred["horizon_days"])]
+
+    # 80% confidence interval shading (if quantile models were trained)
+    if pred.get("predicted_price_low") and pred.get("predicted_price_high"):
+        p_lo = pred["predicted_price_low"]
+        p_hi = pred["predicted_price_high"]
+        # Shade from last known date to forecast point
+        shade_x = [df.index[-1], future_x[0], future_x[0], df.index[-1]]
+        shade_y = [df["Close"].iloc[-1], p_lo, p_hi, df["Close"].iloc[-1]]
+        fig.add_trace(go.Scatter(
+            x=shade_x + shade_x[::-1],
+            y=[df["Close"].iloc[-1], p_lo, p_lo, df["Close"].iloc[-1]] +
+              [df["Close"].iloc[-1], p_hi, p_hi, df["Close"].iloc[-1]],
+            fill="toself",
+            fillcolor="rgba(201,168,76,0.07)",
+            line=dict(color="rgba(0,0,0,0)"),
+            name="80% Confidence Band",
+            showlegend=True,
+            hoverinfo="skip",
+        ), row=1, col=1)
+
+    # Point prediction marker
     fig.add_trace(go.Scatter(
         x=future_x, y=[pred["predicted_price"]],
         mode="markers+text",
@@ -631,15 +836,6 @@ if pred:
         name=f"ML Forecast +{pred['horizon_days']}d",
         showlegend=True,
     ), row=1, col=1)
-
-# Volume
-if show_vol and "Volume" in df.columns:
-    vol_c = ["#26a69a" if df["Close"].iloc[i] >= df["Open"].iloc[i] else "#ef5350"
-             for i in range(len(df))]
-    fig.add_trace(go.Bar(
-        x=df.index, y=df["Volume"], name="Volume",
-        marker_color=vol_c, opacity=0.6,
-    ), row=3, col=1)
 
 fig.update_layout(
     template="plotly_dark",
@@ -656,7 +852,8 @@ fig.update_layout(
     hovermode="x unified",
     hoverlabel=dict(bgcolor="#1a1a2e", bordercolor="rgba(201,168,76,0.2)", font_color="#ddd"),
 )
-for i in range(1, rows+1):
+total_rows = len(row_heights)
+for i in range(1, total_rows + 1):
     fig.update_xaxes(
         gridcolor="#1a1a2e", zeroline=False,
         showspikes=True, spikecolor="rgba(201,168,76,0.25)", spikethickness=1,
@@ -667,7 +864,7 @@ for i in range(1, rows+1):
 fig.update_yaxes(title_text="USD", title_font=dict(size=10, color="#555"), row=1, col=1)
 fig.update_yaxes(title_text="RSI/MACD", title_font=dict(size=10, color="#555"), row=2, col=1)
 
-st.plotly_chart(fig, width="stretch")
+st.plotly_chart(fig, use_container_width=True)
 
 # ── Technical signals table ───────────────────────────────────────────────────
 with st.expander("🔍 Technical Signal Breakdown"):
@@ -740,7 +937,6 @@ with news_tab2:
     if india_articles:
         render_news(india_articles)
     else:
-        # show all articles filtered by India keywords from titles
         india_filtered = [a for a in articles if any(
             kw in a.get("title","").lower()
             for kw in ["india","mcx","rupee","sovereign gold","rbi","sebi"]
@@ -774,7 +970,15 @@ if pred and "feature_importances" in pred:
         )
         fig_fi.update_xaxes(gridcolor="#1a1a2e")
         fig_fi.update_yaxes(gridcolor="#1a1a2e")
-        st.plotly_chart(fig_fi, width="stretch")
+        st.plotly_chart(fig_fi, use_container_width=True)
+
+        # Model training summary
+        if pred.get("train_samples"):
+            mc1, mc2, mc3, mc4 = st.columns(4)
+            mc1.metric("Training samples", pred["train_samples"])
+            mc2.metric("Test samples", pred.get("test_samples", "—"))
+            mc3.metric("Features", pred.get("feature_count", "—"))
+            mc4.metric("Direction accuracy", f"{pred.get('direction_accuracy','?')}%")
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.markdown('<hr class="gold-divider">', unsafe_allow_html=True)
@@ -783,12 +987,24 @@ with fcol1:
     st.markdown(
         "<div style='font-size:0.7rem;color:#333'>"
         "For educational purposes only. Not financial advice. "
-        "Data via Yahoo Finance · News via Google News RSS & yfinance."
+        "Data via Yahoo Finance · News via Reddit, Google News RSS &amp; yfinance."
         "</div>",
         unsafe_allow_html=True,
     )
 with fcol2:
     auto_refresh = st.checkbox("Auto-refresh (5 min)", value=False)
     if auto_refresh:
-        time.sleep(300)
-        st.rerun()
+        # Non-blocking countdown — updates every second, refreshes at 0
+        if "last_refresh" not in st.session_state:
+            st.session_state.last_refresh = time.time()
+        elapsed   = time.time() - st.session_state.last_refresh
+        remaining = max(0, 300 - int(elapsed))
+        if remaining == 0:
+            st.session_state.last_refresh = time.time()
+            st.cache_data.clear()
+            st.rerun()
+        else:
+            mins, secs = divmod(remaining, 60)
+            st.caption(f"Refreshing in {mins}:{secs:02d}")
+            time.sleep(1)
+            st.rerun()

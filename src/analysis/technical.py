@@ -26,11 +26,11 @@ def rsi(series: pd.Series, window: int = 14) -> pd.Series:
 
 
 def macd(series: pd.Series, fast=12, slow=26, signal=9):
-    ema_fast   = ema(series, fast)
-    ema_slow   = ema(series, slow)
-    macd_line  = ema_fast - ema_slow
-    signal_line= ema(macd_line, signal)
-    hist       = macd_line - signal_line
+    ema_fast    = ema(series, fast)
+    ema_slow    = ema(series, slow)
+    macd_line   = ema_fast - ema_slow
+    signal_line = ema(macd_line, signal)
+    hist        = macd_line - signal_line
     return macd_line, signal_line, hist
 
 
@@ -55,7 +55,8 @@ def atr(high: pd.Series, low: pd.Series, close: pd.Series, window=14) -> pd.Seri
 def stochastic(high: pd.Series, low: pd.Series, close: pd.Series, window=14, smooth=3):
     lowest  = low.rolling(window).min()
     highest = high.rolling(window).max()
-    k = 100 * (close - lowest) / (highest - lowest).replace(0, np.nan)
+    denom   = (highest - lowest).replace(0, np.nan)
+    k = 100 * (close - lowest) / denom
     d = k.rolling(smooth).mean()
     return k, d
 
@@ -63,12 +64,28 @@ def stochastic(high: pd.Series, low: pd.Series, close: pd.Series, window=14, smo
 def williams_r(high: pd.Series, low: pd.Series, close: pd.Series, window=14) -> pd.Series:
     highest = high.rolling(window).max()
     lowest  = low.rolling(window).min()
-    return -100 * (highest - close) / (highest - lowest).replace(0, np.nan)
+    denom   = (highest - lowest).replace(0, np.nan)
+    return -100 * (highest - close) / denom
 
 
 def obv(close: pd.Series, volume: pd.Series) -> pd.Series:
     direction = np.sign(close.diff()).fillna(0)
     return (direction * volume).cumsum()
+
+
+def cci(high: pd.Series, low: pd.Series, close: pd.Series, window: int = 20) -> pd.Series:
+    """
+    Commodity Channel Index — measures deviation from average price.
+    Values above +100 indicate overbought; below -100 indicate oversold.
+    Particularly effective for cyclical commodities like gold.
+    """
+    tp       = (high + low + close) / 3          # typical price
+    sma_tp   = tp.rolling(window).mean()
+    mean_dev = tp.rolling(window).apply(
+        lambda x: np.abs(x - x.mean()).mean(), raw=True
+    )
+    denom = (0.015 * mean_dev).replace(0, np.nan)
+    return (tp - sma_tp) / denom
 
 
 # ── Main enrichment function ───────────────────────────────────────────────────
@@ -96,18 +113,19 @@ def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["MACD"], df["MACD_Signal"], df["MACD_Hist"] = macd(c)
     df["Stoch_K"], df["Stoch_D"] = stochastic(h, l, c)
     df["Williams_R"] = williams_r(h, l, c)
+    df["CCI_20"]     = cci(h, l, c, 20)    # Commodity Channel Index
 
     # ── Volatility ─────────────────────────────────────────────────────────────
     df["BB_High"], df["BB_Mid"], df["BB_Low"] = bollinger_bands(c)
-    df["BB_Width"] = (df["BB_High"] - df["BB_Low"]) / df["BB_Mid"]
+    df["BB_Width"] = (df["BB_High"] - df["BB_Low"]) / df["BB_Mid"].replace(0, np.nan)
     df["ATR_14"]   = atr(h, l, c)
 
     # ── Volume ─────────────────────────────────────────────────────────────────
     df["OBV"] = obv(c, v)
 
     # ── Custom signals ─────────────────────────────────────────────────────────
-    df["Price_vs_SMA20"] = (c - df["SMA_20"]) / df["SMA_20"]
-    df["Price_vs_SMA50"] = (c - df["SMA_50"]) / df["SMA_50"]
+    df["Price_vs_SMA20"] = (c - df["SMA_20"]) / df["SMA_20"].replace(0, np.nan)
+    df["Price_vs_SMA50"] = (c - df["SMA_50"]) / df["SMA_50"].replace(0, np.nan)
 
     df["Golden_Cross"] = (
         (df["SMA_50"] > df["SMA_200"]) &
@@ -128,33 +146,53 @@ def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
 # ── Signal interpretation ──────────────────────────────────────────────────────
 
+def _is_valid(val) -> bool:
+    """Return True if val is a finite, non-NaN number usable in comparisons."""
+    try:
+        return pd.notna(val) and np.isfinite(float(val))
+    except (TypeError, ValueError):
+        return False
+
+
 def get_signal_summary(df: pd.DataFrame) -> dict:
     """
     Interpret the latest row of indicators into human-readable signals.
     Returns dict with keys: overall, score, signals, rsi, macd, etc.
+    NaN/missing values are handled gracefully — no invalid comparisons.
     """
     latest  = df.iloc[-1]
     signals = []
     score   = 0
 
+    close  = latest.get("Close")
+    sma50  = latest.get("SMA_50")
+    sma200 = latest.get("SMA_200")
+
     # Trend: price vs SMA-50
-    if latest["Close"] > latest.get("SMA_50", float("nan")):
-        signals.append(("Trend", "Bullish", "Price above SMA-50"))
-        score += 1
+    if _is_valid(close) and _is_valid(sma50):
+        if close > sma50:
+            signals.append(("Trend", "Bullish", "Price above SMA-50"))
+            score += 1
+        else:
+            signals.append(("Trend", "Bearish", "Price below SMA-50"))
+            score -= 1
     else:
-        signals.append(("Trend", "Bearish", "Price below SMA-50"))
-        score -= 1
+        signals.append(("Trend", "Neutral", "SMA-50 unavailable (insufficient data)"))
 
     # Trend: golden/death cross region
-    if latest.get("SMA_50", 0) > latest.get("SMA_200", 0):
-        signals.append(("Trend", "Bullish", "SMA-50 above SMA-200 (golden region)"))
-        score += 1
+    if _is_valid(sma50) and _is_valid(sma200):
+        if sma50 > sma200:
+            signals.append(("Trend", "Bullish", "SMA-50 above SMA-200 (golden region)"))
+            score += 1
+        else:
+            signals.append(("Trend", "Bearish", "SMA-50 below SMA-200 (death region)"))
+            score -= 1
     else:
-        signals.append(("Trend", "Bearish", "SMA-50 below SMA-200 (death region)"))
-        score -= 1
+        signals.append(("Trend", "Neutral", "SMA-200 unavailable (need 200+ bars)"))
 
     # RSI
     r = latest.get("RSI_14", 50)
+    r = r if _is_valid(r) else 50.0
     if r < 30:
         signals.append(("Momentum", "Oversold", f"RSI {r:.1f} — potential reversal up"))
         score += 1
@@ -165,22 +203,44 @@ def get_signal_summary(df: pd.DataFrame) -> dict:
         signals.append(("Momentum", "Neutral", f"RSI {r:.1f}"))
 
     # MACD
-    if latest.get("MACD", 0) > latest.get("MACD_Signal", 0):
-        signals.append(("Momentum", "Bullish", "MACD above signal line"))
-        score += 1
+    macd_val = latest.get("MACD", 0)
+    macd_sig = latest.get("MACD_Signal", 0)
+    if _is_valid(macd_val) and _is_valid(macd_sig):
+        if macd_val > macd_sig:
+            signals.append(("Momentum", "Bullish", "MACD above signal line"))
+            score += 1
+        else:
+            signals.append(("Momentum", "Bearish", "MACD below signal line"))
+            score -= 1
     else:
-        signals.append(("Momentum", "Bearish", "MACD below signal line"))
-        score -= 1
+        signals.append(("Momentum", "Neutral", "MACD unavailable"))
+
+    # CCI
+    cci_val = latest.get("CCI_20")
+    if _is_valid(cci_val):
+        if cci_val > 100:
+            signals.append(("Momentum", "Overbought", f"CCI {cci_val:.0f} — above +100 threshold"))
+            score -= 1
+        elif cci_val < -100:
+            signals.append(("Momentum", "Oversold", f"CCI {cci_val:.0f} — below -100 threshold"))
+            score += 1
+        else:
+            signals.append(("Momentum", "Neutral", f"CCI {cci_val:.0f} — within normal range"))
 
     # Bollinger Bands
-    if latest["Close"] > latest.get("BB_High", float("inf")):
-        signals.append(("Volatility", "Overbought", "Price above upper Bollinger Band"))
-        score -= 1
-    elif latest["Close"] < latest.get("BB_Low", 0):
-        signals.append(("Volatility", "Oversold", "Price below lower Bollinger Band"))
-        score += 1
+    bb_hi = latest.get("BB_High")
+    bb_lo = latest.get("BB_Low")
+    if _is_valid(close) and _is_valid(bb_hi) and _is_valid(bb_lo):
+        if close > bb_hi:
+            signals.append(("Volatility", "Overbought", "Price above upper Bollinger Band"))
+            score -= 1
+        elif close < bb_lo:
+            signals.append(("Volatility", "Oversold", "Price below lower Bollinger Band"))
+            score += 1
+        else:
+            signals.append(("Volatility", "Normal", "Price within Bollinger Bands"))
     else:
-        signals.append(("Volatility", "Normal", "Price within Bollinger Bands"))
+        signals.append(("Volatility", "Neutral", "Bollinger Bands unavailable"))
 
     overall = "Bullish" if score >= 2 else "Bearish" if score <= -2 else "Neutral"
 
@@ -188,7 +248,8 @@ def get_signal_summary(df: pd.DataFrame) -> dict:
         "overall":     overall,
         "score":       score,
         "signals":     signals,
-        "rsi":         r,
+        "rsi":         float(r),
+        "cci":         float(cci_val) if _is_valid(cci_val) else None,
         "macd":        latest.get("MACD"),
         "macd_signal": latest.get("MACD_Signal"),
         "bb_width":    latest.get("BB_Width"),
