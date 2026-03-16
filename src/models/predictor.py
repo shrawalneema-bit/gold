@@ -67,19 +67,19 @@ def _add_lag_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # Rolling statistics (short, medium windows)
     close = df["Close"]
-    df["Rolling_vol_5"]  = close.pct_change().rolling(5).std()
-    df["Rolling_vol_10"] = close.pct_change().rolling(10).std()
-    df["Rolling_vol_20"] = close.pct_change().rolling(20).std()
+    df["Rolling_vol_5"]  = close.pct_change(fill_method=None).rolling(5).std()
+    df["Rolling_vol_10"] = close.pct_change(fill_method=None).rolling(10).std()
+    df["Rolling_vol_20"] = close.pct_change(fill_method=None).rolling(20).std()
     df["Momentum_5"]     = close / close.shift(5) - 1
     df["Momentum_10"]    = close / close.shift(10) - 1
 
     # DXY momentum (dollar strengthening = gold headwind)
     if "DXY_Close" in df.columns:
-        df["DXY_Return_5"] = df["DXY_Close"].pct_change(5)
+        df["DXY_Return_5"] = df["DXY_Close"].pct_change(5, fill_method=None)
 
     # VIX change (rising fear = gold tailwind)
     if "VIX_Close" in df.columns:
-        df["VIX_Change_1"] = df["VIX_Close"].pct_change(1)
+        df["VIX_Change_1"] = df["VIX_Close"].pct_change(1, fill_method=None)
 
     return df
 

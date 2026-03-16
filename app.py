@@ -260,7 +260,7 @@ fig.update_yaxes(title_text="RSI / MACD",  row=2, col=1)
 if show_vol:
     fig.update_yaxes(title_text="Volume", row=3, col=1)
 
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width='stretch')
 
 # ── Technical signal details ──────────────────────────────────────────────────
 with st.expander("🔍 Technical Signal Details"):
@@ -315,7 +315,7 @@ if pred and "feature_importances" in pred:
             xaxis_title="Importance", yaxis=dict(autorange="reversed"),
             margin=dict(l=20, r=20, t=20, b=20),
         )
-        st.plotly_chart(fi_fig, use_container_width=True)
+        st.plotly_chart(fi_fig, width='stretch')
 
 # ── Auto-refresh ──────────────────────────────────────────────────────────────
 st.markdown("---")
