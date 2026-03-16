@@ -2,6 +2,7 @@
 Gold Price Predictor — Professional Streamlit Dashboard
 """
 
+import html as html_lib
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -306,88 +307,71 @@ day_lo  = realtime.get("day_low")   or df["Low"].iloc[-1]
 chg_cls = "ticker-change-up" if change >= 0 else "ticker-change-down"
 chg_sym = "▲" if change >= 0 else "▼"
 
-vix_html, gsr_html = "", ""
+def _card(label, value, sub, border=""):
+    """Render a single ticker card — no variable interpolation into large f-strings."""
+    style = f' style="border-color:{border}"' if border else ""
+    st.markdown(
+        f'<div class="ticker-card"{style}>'
+        f'<div class="ticker-label">{label}</div>'
+        f'<div class="ticker-value">{value}</div>'
+        f'<div class="ticker-change-flat">{sub}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
-# VIX — use live value from india context (which tries VIXY then ^VIX fallbacks)
+def _card_change(label, value, change_val, change_str):
+    cls = "ticker-change-up" if change_val >= 0 else "ticker-change-down"
+    sym = "▲" if change_val >= 0 else "▼"
+    st.markdown(
+        f'<div class="ticker-card">'
+        f'<div class="ticker-label">{label}</div>'
+        f'<div class="ticker-value">{value}</div>'
+        f'<div class="{cls}">{sym} {change_str}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+# Row 1: Global prices
+r1 = st.columns(5)
+with r1[0]: _card_change("Gold Futures · GC=F", f"${last:,.2f}", change, f"${abs(change):.2f} ({pct:+.2f}%)")
+with r1[1]: _card("Day High", f"${day_hi:,.2f}", "Session high")
+with r1[2]: _card("Day Low",  f"${day_lo:,.2f}", "Session low")
+
+# VIX
 vix_live = india.get("vix")
-if vix_live:
-    vix_prev = df["VIX_Close"].iloc[-2] if "VIX_Close" in df.columns and df["VIX_Close"].notna().sum() > 1 else vix_live
-    dvix = vix_live - vix_prev
-    vcls = "ticker-change-up" if dvix >= 0 else "ticker-change-down"
-    vsym = "▲" if dvix >= 0 else "▼"
-    vix_html = f"""
-    <div class="ticker-card">
-        <div class="ticker-label">VIX · Fear Index</div>
-        <div class="ticker-value">{vix_live:.1f}</div>
-        <div class="{vcls}">{vsym} {abs(dvix):.2f} today</div>
-    </div>"""
-else:
-    vix_html = '<div class="ticker-card"><div class="ticker-label">VIX · Fear Index</div><div class="ticker-value" style="color:#444">N/A</div><div class="ticker-change-flat">via VIXY ETF</div></div>'
+with r1[3]:
+    if vix_live:
+        vix_prev = df["VIX_Close"].iloc[-2] if "VIX_Close" in df.columns and df["VIX_Close"].notna().sum() > 1 else vix_live
+        _card_change("VIX · Fear Index", f"{vix_live:.1f}", vix_live - vix_prev, f"{abs(vix_live - vix_prev):.2f} today")
+    else:
+        _card("VIX · Fear Index", "—", "Loading…")
 
-# Gold/Silver ratio — SLV is now used instead of SI=F futures
-if "Silver_Close" in df.columns and df["Silver_Close"].notna().any():
-    gsr = df["Close"].iloc[-1] / df["Silver_Close"].iloc[-1]
-    gsr_html = f"""
-    <div class="ticker-card">
-        <div class="ticker-label">Gold / Silver Ratio</div>
-        <div class="ticker-value">{gsr:.1f}</div>
-        <div class="ticker-change-flat">historical avg ~65–80</div>
-    </div>"""
-else:
-    gsr_html = '<div class="ticker-card"><div class="ticker-label">G/S Ratio</div><div class="ticker-value" style="color:#444">N/A</div><div class="ticker-change-flat">via SLV ETF</div></div>'
+# Gold/Silver ratio
+with r1[4]:
+    if "Silver_Close" in df.columns and df["Silver_Close"].notna().any():
+        sv = df["Silver_Close"].iloc[-1]
+        gsr = df["Close"].iloc[-1] / sv if sv and sv > 0 else None
+        if gsr:
+            _card("Gold / Silver Ratio", f"{gsr:.1f}", "avg ~65–80")
+        else:
+            _card("G/S Ratio", "—", "No silver data")
+    else:
+        _card("G/S Ratio", "—", "No silver data")
 
-# India cards
-mcx   = india.get("mcx_approx")
-usdinr= india.get("usdinr")
-nifty = india.get("nifty")
-
-mcx_html = f"""
-<div class="ticker-card" style="border-color:#c9a84c30">
-  <div class="ticker-label">🇮🇳 MCX Gold (approx)</div>
-  <div class="ticker-value">₹{mcx:,.0f}</div>
-  <div class="ticker-change-flat">per 10g · based on COMEX×INR</div>
-</div>""" if mcx else ""
-
-usdinr_html = f"""
-<div class="ticker-card">
-  <div class="ticker-label">USD / INR</div>
-  <div class="ticker-value">₹{usdinr:,.2f}</div>
-  <div class="ticker-change-flat">Live exchange rate</div>
-</div>""" if usdinr else ""
-
-nifty_html = f"""
-<div class="ticker-card">
-  <div class="ticker-label">Nifty 50</div>
-  <div class="ticker-value">{nifty:,.0f}</div>
-  <div class="ticker-change-flat">NSE index</div>
-</div>""" if nifty else ""
-
-st.markdown(f"""
-<div class="ticker-grid">
-  <div class="ticker-card">
-    <div class="ticker-label">Gold Futures · GC=F</div>
-    <div class="ticker-value">${last:,.2f}</div>
-    <div class="{chg_cls}">{chg_sym} ${abs(change):.2f} &nbsp;({pct:+.2f}%)</div>
-  </div>
-  <div class="ticker-card">
-    <div class="ticker-label">Day High</div>
-    <div class="ticker-value">${day_hi:,.2f}</div>
-    <div class="ticker-change-flat">Session high</div>
-  </div>
-  <div class="ticker-card">
-    <div class="ticker-label">Day Low</div>
-    <div class="ticker-value">${day_lo:,.2f}</div>
-    <div class="ticker-change-flat">Session low</div>
-  </div>
-  {vix_html}
-  {gsr_html}
-</div>
-<div class="ticker-grid" style="margin-top:-4px">
-  {mcx_html}
-  {usdinr_html}
-  {nifty_html}
-</div>
-""", unsafe_allow_html=True)
+# Row 2: India
+mcx, usdinr, nifty = india.get("mcx_approx"), india.get("usdinr"), india.get("nifty")
+india_cards = [x for x in [mcx, usdinr, nifty] if x]
+if india_cards:
+    r2 = st.columns(max(len(india_cards), 3))
+    ci = 0
+    if mcx:
+        with r2[ci]: _card("🇮🇳 MCX Gold (approx)", f"₹{mcx:,.0f}", "per 10g · COMEX×INR", "rgba(201,168,76,0.15)")
+        ci += 1
+    if usdinr:
+        with r2[ci]: _card("USD / INR", f"₹{usdinr:,.2f}", "Live exchange rate")
+        ci += 1
+    if nifty:
+        with r2[ci]: _card("Nifty 50", f"{nifty:,.0f}", "NSE index")
 
 # ── Signal cards ──────────────────────────────────────────────────────────────
 st.markdown('<div class="section-header">Market Signals</div>', unsafe_allow_html=True)
@@ -621,17 +605,17 @@ fig.add_trace(go.Bar(
 if show_sr:
     window = 20
     recent = df.tail(120)
-    resistance = recent["High"].rolling(window, center=True).max()
-    support    = recent["Low"].rolling(window, center=True).min()
-    # Plot only the most recent S/R level as a horizontal line
-    r_level = resistance.dropna().iloc[-1]
-    s_level = support.dropna().iloc[-1]
-    fig.add_hline(y=r_level, line_dash="dot", line_color="rgba(239,83,80,0.4)", line_width=1.5,
-                  annotation_text=f"R ${r_level:,.0f}", annotation_font_color="#ef5350",
-                  annotation_font_size=10, row=1, col=1)
-    fig.add_hline(y=s_level, line_dash="dot", line_color="rgba(38,166,154,0.4)", line_width=1.5,
-                  annotation_text=f"S ${s_level:,.0f}", annotation_font_color="#26a69a",
-                  annotation_font_size=10, row=1, col=1)
+    resistance = recent["High"].rolling(window, center=True).max().dropna()
+    support    = recent["Low"].rolling(window, center=True).min().dropna()
+    if len(resistance) > 0 and len(support) > 0:
+        r_level = resistance.iloc[-1]
+        s_level = support.iloc[-1]
+        fig.add_hline(y=r_level, line_dash="dot", line_color="rgba(239,83,80,0.4)", line_width=1.5,
+                      annotation_text=f"R ${r_level:,.0f}", annotation_font_color="#ef5350",
+                      annotation_font_size=10, row=1, col=1)
+        fig.add_hline(y=s_level, line_dash="dot", line_color="rgba(38,166,154,0.4)", line_width=1.5,
+                      annotation_text=f"S ${s_level:,.0f}", annotation_font_color="#26a69a",
+                      annotation_font_size=10, row=1, col=1)
 
 # ML predicted price marker
 if pred:
@@ -732,8 +716,8 @@ def render_news(article_list, max_items=20):
         bcls     = {"Bullish":"news-bull","Bearish":"news-bear","Neutral":"news-neut"}.get(sent_val,"news-neut")
         score    = a.get("compound", 0)
         url      = a.get("url","")
-        title    = a.get("title","")
-        src      = a.get("source","")
+        title    = html_lib.escape(a.get("title",""))
+        src      = html_lib.escape(a.get("source",""))
 
         title_html = f'<a href="{url}" target="_blank">{title}</a>' if url else title
 

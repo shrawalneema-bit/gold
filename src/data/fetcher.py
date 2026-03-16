@@ -17,7 +17,7 @@ SPY_TICKER     = "SPY"        # S&P 500 ETF (risk-on/off signal)
 TLT_TICKER     = "TLT"        # 20yr Treasury ETF (safe-haven signal)
 VIX_TICKER     = "VIXY"       # ProShares VIX ETF — more reliable than ^VIX on cloud
 VIX_FALLBACKS  = ["^VIX", "VIXM"]
-SILVER_TICKER  = "SLV"        # iShares Silver ETF — more reliable than SI=F futures
+SILVER_TICKERS = ["SLV", "SIVR", "SI=F"]  # Silver fallback chain
 USDINR_TICKER  = "USDINR=X"  # USD/INR exchange rate (for MCX price conversion)
 NIFTY_TICKER   = "^NSEI"     # Nifty 50 (Indian equity market)
 
@@ -78,7 +78,7 @@ def fetch_macro_context(period: str = "1y") -> pd.DataFrame:
         "DXY":    DXY_TICKER,
         "SPY":    SPY_TICKER,
         "TLT":    TLT_TICKER,
-        "Silver": SILVER_TICKER,
+        "Silver": SILVER_TICKERS[0],  # primary; fallbacks tried below
         "USDINR": USDINR_TICKER,
         "Nifty":  NIFTY_TICKER,
     }
@@ -100,6 +100,17 @@ def fetch_macro_context(period: str = "1y") -> pd.DataFrame:
                 break
         except Exception:
             continue
+
+    # Silver — try fallback chain if primary fails
+    if "Silver_Close" not in frames:
+        for ag_sym in SILVER_TICKERS[1:]:
+            try:
+                df = yf.Ticker(ag_sym).history(period=period, interval="1d", auto_adjust=True)
+                if not df.empty:
+                    frames["Silver_Close"] = df["Close"]
+                    break
+            except Exception:
+                continue
 
     if not frames:
         return pd.DataFrame()
@@ -126,7 +137,11 @@ def fetch_combined(period: str = "1y") -> pd.DataFrame:
 
     # Derived: Gold/Silver ratio
     if "Silver_Close" in combined.columns:
-        combined["Gold_Silver_Ratio"] = combined["Close"] / combined["Silver_Close"].replace(0, float("nan"))
+        silver = combined["Silver_Close"].replace(0, float("nan"))
+        combined["Gold_Silver_Ratio"] = combined["Close"] / silver
+        combined["Gold_Silver_Ratio"] = combined["Gold_Silver_Ratio"].replace(
+            [float("inf"), float("-inf")], float("nan")
+        )
 
     # Derived: Approximate MCX price (INR per 10g)
     if "USDINR_Close" in combined.columns:
