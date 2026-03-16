@@ -10,13 +10,20 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 
-GOLD_TICKER   = "GC=F"       # Gold Futures (most accurate spot-like price)
-GOLD_ETF      = "GLD"        # SPDR Gold Shares ETF (highly liquid proxy)
-DXY_TICKER    = "DX-Y.NYB"  # US Dollar Index (inverse correlation with gold)
-SPY_TICKER    = "SPY"        # S&P 500 ETF (risk-on/off signal)
-TLT_TICKER    = "TLT"        # 20yr Treasury ETF (safe-haven signal)
-VIX_TICKER    = "^VIX"       # CBOE Volatility Index (fear → gold rises)
-SILVER_TICKER = "SI=F"       # Silver Futures (gold/silver ratio signal)
+GOLD_TICKER    = "GC=F"       # Gold Futures (most accurate spot-like price)
+GOLD_ETF       = "GLD"        # SPDR Gold Shares ETF (highly liquid proxy)
+DXY_TICKER     = "DX-Y.NYB"  # US Dollar Index (inverse correlation with gold)
+SPY_TICKER     = "SPY"        # S&P 500 ETF (risk-on/off signal)
+TLT_TICKER     = "TLT"        # 20yr Treasury ETF (safe-haven signal)
+VIX_TICKER     = "^VIX"       # CBOE Volatility Index (fear → gold rises)
+SILVER_TICKER  = "SI=F"       # Silver Futures (gold/silver ratio signal)
+USDINR_TICKER  = "USDINR=X"  # USD/INR exchange rate (for MCX price conversion)
+NIFTY_TICKER   = "^NSEI"     # Nifty 50 (Indian equity market)
+
+# MCX gold is priced in INR per 10 grams
+# COMEX price is in USD per troy oz (1 troy oz = 31.1035 g)
+# MCX approx = COMEX_USD × USDINR × (10 / 31.1035)
+MCX_CONVERSION = 10 / 31.1035
 
 
 def fetch_gold_ohlcv(
@@ -72,6 +79,8 @@ def fetch_macro_context(period: str = "1y") -> pd.DataFrame:
         "TLT":    TLT_TICKER,
         "VIX":    VIX_TICKER,
         "Silver": SILVER_TICKER,
+        "USDINR": USDINR_TICKER,
+        "Nifty":  NIFTY_TICKER,
     }
     frames = {}
     for name, sym in tickers.items():
@@ -105,8 +114,38 @@ def fetch_combined(period: str = "1y") -> pd.DataFrame:
     combined = gold.join(macro, how="left")
     combined.ffill(inplace=True)
 
-    # Derived: Gold/Silver ratio (classic valuation signal)
+    # Derived: Gold/Silver ratio
     if "Silver_Close" in combined.columns:
         combined["Gold_Silver_Ratio"] = combined["Close"] / combined["Silver_Close"].replace(0, float("nan"))
 
+    # Derived: Approximate MCX price (INR per 10g)
+    if "USDINR_Close" in combined.columns:
+        combined["MCX_Approx"] = combined["Close"] * combined["USDINR_Close"] * MCX_CONVERSION
+
     return combined
+
+
+def fetch_india_context() -> dict:
+    """
+    Fetch Indian market snapshot: USD/INR rate and MCX approximate gold price.
+    Returns a dict for display in the dashboard.
+    """
+    result = {"usdinr": None, "mcx_approx": None, "nifty": None}
+    try:
+        inr_info = yf.Ticker(USDINR_TICKER).fast_info
+        usdinr   = getattr(inr_info, "last_price", None)
+        if usdinr:
+            result["usdinr"]    = round(usdinr, 2)
+            # Get latest COMEX price
+            gold_info = yf.Ticker(GOLD_TICKER).fast_info
+            comex = getattr(gold_info, "last_price", None)
+            if comex:
+                result["mcx_approx"] = round(comex * usdinr * MCX_CONVERSION, 0)
+    except Exception:
+        pass
+    try:
+        nifty_info   = yf.Ticker(NIFTY_TICKER).fast_info
+        result["nifty"] = getattr(nifty_info, "last_price", None)
+    except Exception:
+        pass
+    return result
